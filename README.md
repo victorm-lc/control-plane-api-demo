@@ -1,4 +1,4 @@
-# LangGraph Platform Control Plane API Demo 🦜🕸️
+# Building a CI/CD Pipeline for LangGraph Platform Deployments using Github Actions 🦜🕸️
 
 This repository demonstrates how you can automate the deployment of agents to LangGraph Platform (LGP) using Github Actions
 

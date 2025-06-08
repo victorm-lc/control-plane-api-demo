@@ -17,7 +17,7 @@ env:
 jobs:
   # Job 1: Run custom logic and tests
   run-custom-logic:
-    if: false && (github.ref == 'refs/heads/main' || (github.event.pull_request.merged == true))
+    if: (github.ref == 'refs/heads/main' || (github.event.pull_request.merged == true))
     runs-on: ubuntu-latest
     
     outputs:

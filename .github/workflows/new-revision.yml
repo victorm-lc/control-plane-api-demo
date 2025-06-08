@@ -12,7 +12,7 @@ on:
 env:
   PYTHON_VERSION: '3.11'
   REGISTRY: docker.io
-  IMAGE_NAME: davidxu33/control-plane-api-demo
+  IMAGE_NAME: davidxu3/control-plane-api-demo
   PROJECT_ID: 'd6cee583-a32a-4342-a748-3dfc857ba964'  # Replace with your actual project ID
 
 jobs:

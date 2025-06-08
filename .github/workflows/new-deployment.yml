@@ -12,7 +12,7 @@ on:
 env:
   PYTHON_VERSION: '3.11'
   REGISTRY: docker.io  # Change to ghcr.io for GitHub Container Registry
-  IMAGE_NAME: davidxu33/control-plane-api-demo  # Replace YOUR_DOCKERHUB_USERNAME with your actual Docker Hub username
+  IMAGE_NAME: davidxu3/control-plane-api-demo  # Replace YOUR_DOCKERHUB_USERNAME with your actual Docker Hub username
 
 jobs:
   # Job 1: Run custom logic and tests

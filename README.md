@@ -1,6 +1,6 @@
 # Building a CI/CD Pipeline for LangGraph Platform Deployments using Github Actions 🦜🕸️
 
-This repository demonstrates how you can automate the deployment of agents to LangGraph Platform (LGP) using Github Actions
+This repository demonstrates how you can automate the deployment of agents to LangGraph Platform (LGP) using Github Actions and the LGP [Control Plane API](https://langchain-ai.github.io/langgraph/cloud/reference/api/api_ref_control_plane.html#description/introduction) 
 
 The project contains two key workflows:
 

@@ -3,11 +3,10 @@ name: Create New Deployment
 # Trigger the workflow on push or pull request merge to main
 on:
   push:
-    branches: [ main ]
+    branches: [ vic/update-to-v2 ]
   pull_request:
     branches: [ main ]
     types: [ closed ]
-  workflow_dispatch:
 
 # Set environment variables
 env:

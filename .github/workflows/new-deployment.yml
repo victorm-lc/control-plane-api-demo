@@ -162,20 +162,20 @@ jobs:
         
         if [ $http_status -eq 200 ]; then
           echo "✅ Available listeners:"
-          echo "$response_body" | python3 -c "
+          echo "$response_body" | python3 -c '
 import sys, json
 data = json.load(sys.stdin)
-if 'resources' in data:
-    for listener in data['resources']:
-        print(f\"  🎯 ID: {listener['id']}\")
-        print(f\"     Name: {listener.get('name', 'N/A')}\")
-        print(f\"     Compute Type: {listener.get('compute_type', 'N/A')}\")
-        print(f\"     Status: {listener.get('status', 'N/A')}\")
+if "resources" in data:
+    for listener in data["resources"]:
+        print(f"  🎯 ID: {listener[\"id\"]}")
+        print(f"     Name: {listener.get(\"name\", \"N/A\")}")
+        print(f"     Compute Type: {listener.get(\"compute_type\", \"N/A\")}")
+        print(f"     Status: {listener.get(\"status\", \"N/A\")}")
         print()
 else:
-    print('No listeners found or unexpected response format')
+    print("No listeners found or unexpected response format")
     print(data)
-"
+'
         else
           echo "⚠️  Failed to list listeners (status: $http_status)"
           echo "📋 Response: $response_body"

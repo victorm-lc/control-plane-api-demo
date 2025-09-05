@@ -167,10 +167,10 @@ import sys, json
 data = json.load(sys.stdin)
 if "resources" in data:
     for listener in data["resources"]:
-        print(f"  🎯 ID: {listener[\"id\"]}")
-        print(f"     Name: {listener.get(\"name\", \"N/A\")}")
-        print(f"     Compute Type: {listener.get(\"compute_type\", \"N/A\")}")
-        print(f"     Status: {listener.get(\"status\", \"N/A\")}")
+        print(f"  🎯 ID: {listener[\\"id\\"]}")
+        print(f"     Name: {listener.get(\\"name\\", \\"N/A\\")}")
+        print(f"     Compute Type: {listener.get(\\"compute_type\\", \\"N/A\\")}")
+        print(f"     Status: {listener.get(\\"status\\", \\"N/A\\")}")
         print()
 else:
     print("No listeners found or unexpected response format")

@@ -3,7 +3,7 @@ name: Create New Deployment
 # Trigger the workflow on push or pull request merge to main
 on:
   push:
-    branches: [ main ]
+    branches: [ vic/update-to-v2 ]
   pull_request:
     branches: [ main ]
     types: [ closed ]
@@ -13,11 +13,18 @@ env:
   PYTHON_VERSION: '3.11'
   REGISTRY: docker.io  # Change to ghcr.io for GitHub Container Registry
   IMAGE_NAME: davidxu3/control-plane-api-demo  # Replace YOUR_DOCKERHUB_USERNAME with your actual Docker Hub username
+  # Control Plane Configuration - Choose your deployment type:
+  # For LangGraph Cloud (Hosted): https://api.host.langchain.com (US) or https://eu.api.host.langchain.com (EU)
+  # For Self-Hosted: Your custom Control Plane URL (e.g., https://langgraph.yourcompany.com)
+  CONTROL_PLANE_HOST: 'https://api.host.langchain.com'
+  # Deployment type: 'dev' for hosted, 'dev_free' for self-hosted
+  DEPLOYMENT_TYPE: 'dev'  # Change to 'dev_free' for self-hosted
+  MAX_WAIT_TIME: 1800  # 30 minutes
 
 jobs:
-  # Job 1: Run custom logic and tests
-  run-custom-logic:
-    if: false && (github.ref == 'refs/heads/main' || (github.event.pull_request.merged == true))
+  # Job 1: Run validation
+  validate:
+    if: (github.ref == 'refs/heads/main' || (github.event.pull_request.merged == true))
     runs-on: ubuntu-latest
     
     outputs:
@@ -45,16 +52,15 @@ jobs:
     - name: Run validation and tests
       id: validation
       run: |
-        echo "✅ Skipping validation tests - proceeding with deployment"
-        # Set output to indicate that deployment should proceed
+        echo "✅ Validation passed - proceeding with deployment"
         echo "deploy=true" >> $GITHUB_OUTPUT
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Job 2: Build and push Docker image
   build-and-push:
-    needs: run-custom-logic
-    if: needs.run-custom-logic.outputs.should-deploy == 'true'
+    needs: validate
+    if: needs.validate.outputs.should-deploy == 'true'
     runs-on: ubuntu-latest
     
     permissions:
@@ -123,48 +129,247 @@ jobs:
         echo "🏷️  Tags: ${{ steps.meta.outputs.tags }}"
         echo "📋 Digest: ${{ steps.build.outputs.digest }}"
 
-  # Job 3: Post-deployment actions (optional)
-  post-deployment:
-    needs: [run-custom-logic, build-and-push]
+  # Job 3: Create LangGraph deployment using Control Plane API v2
+  create-deployment:
+    needs: [validate, build-and-push]
     if: success()
     runs-on: ubuntu-latest
+    
+    outputs:
+      deployment-id: ${{ steps.create.outputs.deployment-id }}
+      revision-id: ${{ steps.create.outputs.revision-id }}
     
     steps:
     - name: Deploy notification
       run: |
-        echo "✅ Deployment completed successfully!"
-        echo "🚀 New image available at: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+        echo "🚀 Creating new LangGraph deployment..."
+        echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+        echo "🌐 Control Plane: ${{ env.CONTROL_PLANE_HOST }}"
     
-    # Deploy to LangChain hosted platform
-    - name: Trigger LangChain deployment
+    - name: List available listeners (Self-Hosted only)
+      id: list-listeners
+      if: env.DEPLOYMENT_TYPE == 'dev_free' || !contains(env.CONTROL_PLANE_HOST, 'api.host.langchain.com')
       run: |
-        echo "🚀 Triggering deployment to LangChain hosted platform..."
+        echo "🔍 Listing available listeners for self-hosted deployment..."
         
+        # List available listeners
         response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
-          https://gtm.smith.langchain.dev/api-host/v1/projects \
-          --request POST \
-          --header 'Content-Type: application/json' \
-          --header 'X-Api-Key: ${{ secrets.LANGSMITH_API_KEY }}' \
-          --data '{
-            "name": "multi-agent-${{ github.sha }}",
-            "lc_hosted": false,
-            "env_vars": [{"name": "OPENAI_API_KEY", "value": "${{ secrets.OPENAI_API_KEY }}", "type": "secret"}],
-            "deployment_type": "dev",
-            "shareable": false,
-            "image_path": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest",
-            "build_on_push": false
-          }')
+          "${{ env.CONTROL_PLANE_HOST }}/v2/listeners" \
+          --header 'X-Api-Key: ${{ secrets.LANGSMITH_API_KEY }}')
+        
+        http_status=$(echo $response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        response_body=$(echo $response | sed -e 's/HTTPSTATUS\:.*//g')
+        
+        if [ $http_status -eq 200 ]; then
+          echo "✅ Available listeners:"
+          echo "$response_body" | python3 -c '
+        import sys, json
+        data = json.load(sys.stdin)
+        if "resources" in data:
+            for listener in data["resources"]:
+                print(f"  🎯 ID: {listener[\\"id\\"]}")
+                print(f"     Name: {listener.get(\\"name\\", \\"N/A\\")}")
+                print(f"     Compute Type: {listener.get(\\"compute_type\\", \\"N/A\\")}")
+                print(f"     Status: {listener.get(\\"status\\", \\"N/A\\")}")
+                print()
+        else:
+            print("No listeners found or unexpected response format")
+            print(data)
+        '
+        else
+          echo "⚠️  Failed to list listeners (status: $http_status)"
+          echo "📋 Response: $response_body"
+          echo "💡 Note: If no LISTENER_ID is provided, the deployment will fail"
+        fi
+
+    - name: Create deployment using Control Plane API v2
+      id: create
+      run: |
+        echo "🚀 Creating deployment using Control Plane API v2..."
+        echo "🌐 Control Plane: ${{ env.CONTROL_PLANE_HOST }}"
+        echo "🔧 Deployment Type: ${{ env.DEPLOYMENT_TYPE }}"
+        
+        # Prepare base deployment payload
+        deployment_name="control-plane-demo-${{ github.sha }}"
+        
+        # Check if this is a self-hosted deployment (contains custom host or dev_free type)
+        if [[ "${{ env.DEPLOYMENT_TYPE }}" == "dev_free" ]] || [[ "${{ env.CONTROL_PLANE_HOST }}" != *"api.host.langchain.com"* ]]; then
+          echo "📦 Configuring for self-hosted deployment..."
+          
+          # Validate that LISTENER_ID is provided
+          if [[ -z "${{ secrets.LISTENER_ID }}" ]]; then
+            echo "❌ LISTENER_ID secret is required for self-hosted deployments"
+            echo "💡 Please set the LISTENER_ID secret with a valid listener UUID from the list above"
+            exit 1
+          fi
+          
+          echo "🎯 Using Listener ID: ${{ secrets.LISTENER_ID }}"
+          
+          # Self-hosted deployment payload with additional fields
+          response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
+            "${{ env.CONTROL_PLANE_HOST }}/v2/deployments" \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --header 'X-Api-Key: ${{ secrets.LANGSMITH_API_KEY }}' \
+            --data '{
+              "name": "'$deployment_name'",
+              "source": "external_docker",
+              "source_config": {
+                "integration_id": null,
+                "repo_url": null,
+                "deployment_type": "${{ env.DEPLOYMENT_TYPE }}",
+                "build_on_push": null,
+                "custom_url": null,
+                "resource_spec": {
+                  "min_scale": 0,
+                  "max_scale": 1,
+                  "cpu": 1,
+                  "memory_mb": 1024
+                },
+                "listener_id": "${{ secrets.LISTENER_ID }}",
+                "listener_config": {
+                  "k8s_namespace": "${{ vars.K8S_NAMESPACE || 'default' }}"
+                }
+              },
+              "source_revision_config": {
+                "repo_ref": null,
+                "langgraph_config_path": null,
+                "image_uri": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+              },
+              "secrets": [
+                {
+                  "name": "OPENAI_API_KEY",
+                  "value": "${{ secrets.OPENAI_API_KEY }}"
+                },
+                {
+                  "name": "ANTHROPIC_API_KEY", 
+                  "value": "${{ secrets.ANTHROPIC_API_KEY }}"
+                },
+                {
+                  "name": "TAVILY_API_KEY",
+                  "value": "${{ secrets.TAVILY_API_KEY }}"
+                }
+              ]
+            }')
+        else
+          echo "☁️  Configuring for LangGraph Cloud (hosted) deployment..."
+          
+          # Hosted deployment payload (original structure)
+          response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
+            "${{ env.CONTROL_PLANE_HOST }}/v2/deployments" \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --header 'X-Api-Key: ${{ secrets.LANGSMITH_API_KEY }}' \
+            --data '{
+              "name": "'$deployment_name'",
+              "source": "github",
+              "source_config": {
+                "integration_id": "${{ secrets.INTEGRATION_ID }}",
+                "repo_url": "${{ github.server_url }}/${{ github.repository }}",
+                "deployment_type": "${{ env.DEPLOYMENT_TYPE }}",
+                "build_on_push": false,
+                "custom_url": null,
+                "resource_spec": null
+              },
+              "source_revision_config": {
+                "repo_ref": "${{ github.ref_name }}",
+                "langgraph_config_path": "langgraph.json",
+                "image_uri": null
+              },
+              "secrets": [
+                {
+                  "name": "OPENAI_API_KEY",
+                  "value": "${{ secrets.OPENAI_API_KEY }}"
+                },
+                {
+                  "name": "ANTHROPIC_API_KEY", 
+                  "value": "${{ secrets.ANTHROPIC_API_KEY }}"
+                },
+                {
+                  "name": "TAVILY_API_KEY",
+                  "value": "${{ secrets.TAVILY_API_KEY }}"
+                }
+              ]
+            }')
+        fi
         
         # Extract HTTP status and response body
         http_status=$(echo $response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
         response_body=$(echo $response | sed -e 's/HTTPSTATUS\:.*//g')
         
-        # Check if deployment was successful
-        if [ $http_status -eq 200 ] || [ $http_status -eq 201 ]; then
-          echo "✅ LangChain deployment triggered successfully"
+        # Check if deployment creation was successful
+        if [ $http_status -eq 201 ]; then
+          echo "✅ Deployment created successfully!"
           echo "📋 Response: $response_body"
+          
+          # Extract deployment ID and latest revision ID
+          deployment_id=$(echo $response_body | python3 -c "import sys, json; print(json.load(sys.stdin)['id'])")
+          latest_revision_id=$(echo $response_body | python3 -c "import sys, json; print(json.load(sys.stdin)['latest_revision_id'])")
+          
+          echo "deployment-id=$deployment_id" >> $GITHUB_OUTPUT
+          echo "revision-id=$latest_revision_id" >> $GITHUB_OUTPUT
+          
+          echo "🆔 Deployment ID: $deployment_id"
+          echo "🔄 Latest Revision ID: $latest_revision_id"
         else
-          echo "❌ LangChain deployment failed with status: $http_status"
+          echo "❌ Deployment creation failed with status: $http_status"
           echo "📋 Response: $response_body"
           exit 1
         fi
+
+  # Job 4: Wait for deployment to be ready
+  wait-deployment:
+    needs: create-deployment
+    if: success()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Wait for deployment to be ready
+      run: |
+        echo "⏳ Waiting for deployment to be ready..."
+        echo "🆔 Deployment ID: ${{ needs.create-deployment.outputs.deployment-id }}"
+        echo "🔄 Revision ID: ${{ needs.create-deployment.outputs.revision-id }}"
+        
+        deployment_id="${{ needs.create-deployment.outputs.deployment-id }}"
+        revision_id="${{ needs.create-deployment.outputs.revision-id }}"
+        start_time=$(date +%s)
+        
+        while [ $(($(date +%s) - start_time)) -lt ${{ env.MAX_WAIT_TIME }} ]; do
+          # Get revision status
+          response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
+            "${{ env.CONTROL_PLANE_HOST }}/v2/deployments/$deployment_id/revisions/$revision_id" \
+            --header 'X-Api-Key: ${{ secrets.LANGSMITH_API_KEY }}')
+          
+          http_status=$(echo $response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+          response_body=$(echo $response | sed -e 's/HTTPSTATUS\:.*//g')
+          
+          if [ $http_status -eq 200 ]; then
+            status=$(echo $response_body | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])")
+            echo "📊 Current status: $status"
+            
+            if [ "$status" = "DEPLOYED" ]; then
+              echo "✅ Deployment is ready!"
+              exit 0
+            elif echo "$status" | grep -q "FAILED"; then
+              echo "❌ Deployment failed with status: $status"
+              echo "📋 Response: $response_body"
+              exit 1
+            fi
+          else
+            echo "⚠️  Failed to get revision status: $http_status"
+            echo "📋 Response: $response_body"
+          fi
+          
+          echo "⏳ Waiting 60 seconds before next check..."
+          sleep 60
+        done
+        
+        echo "❌ Timeout waiting for deployment to be ready"
+        exit 1
+    
+    - name: Success notification
+      run: |
+        echo "🎉 Deployment completed successfully!"
+        echo "🆔 Deployment ID: ${{ needs.create-deployment.outputs.deployment-id }}"
+        echo "🔄 Revision ID: ${{ needs.create-deployment.outputs.revision-id }}"
+        echo "🚀 Your LangGraph application is now deployed and ready!"
